@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CPU Scheduling Simulator — Dashboard (Tabbed Sidebar)</title>
+
+  <!-- Tailwind CSS (via CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- html2canvas for exporting Gantt as PNG -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+  <style>
+    /* Small custom tweaks used by the layout and Gantt (colors, sizes) */
+    .gantt-block { height: 48px; display:flex; align-items:center; justify-content:center; border-radius:6px; }
+    .time-mark { font-size: 12px; color:inherit; }
+    /* Responsive sidebar behavior for small screens */
+    @media (max-width: 768px) {
+      .sidebar { position: fixed; z-index: 30; transform: translateX(-100%); transition: transform .18s ease; }
+      .sidebar.open { transform: translateX(0); }
+      .backdrop { display:block; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:20; }
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+
+  <!-- ================= Header ================= -->
+  <header class="flex items-center justify-between px-4 py-3 shadow-sm bg-white dark:bg-slate-900">
+    <div class="flex items-center gap-3">
+      <!-- Mobile hamburger -->
+      <button id="mobileToggle" class="md:hidden p-2 rounded bg-slate-100 dark:bg-slate-800" aria-label="Open menu">☰</button>
+
+      <!-- Title + Author -->
+      <div>
+        <h1 class="text-lg font-semibold">CPU Scheduling Simulator</h1>
+        <div class="text-xs text-slate-500">by Piyush — Educational CPU scheduling visualizer</div>
+      </div>
+
+      <span class="ml-2 text-sm text-slate-500 hidden md:inline">(Dashboard — Tabbed Sidebar)</span>
+    </div>
+
+    <!-- Controls: dark mode, CSV, PNG, minify -->
+    <div class="flex items-center gap-3">
+      <label class="flex items-center gap-2 text-sm">
+        <input id="darkModeToggle" type="checkbox" class="w-4 h-4"/>
+        <span class="text-sm">Dark Mode</span>
+      </label>
+
+      <button id="downloadBtn" class="px-3 py-1 rounded bg-indigo-600 text-white text-sm">Download CSV</button>
+      <button id="exportPngBtn" class="px-3 py-1 rounded bg-emerald-600 text-white text-sm">Export Gantt PNG</button>
+      <button id="minifyBtn" class="px-3 py-1 rounded bg-yellow-600 text-white text-sm">Download Minified HTML</button>
+    </div>
+  </header>
+
+  <div class="flex min-h-screen">
+    <!-- ================ Sidebar (left) ================ -->
+    <nav id="sidebar" class="sidebar w-60 bg-white border-r dark:bg-slate-800 dark:border-slate-700 md:relative md:translate-x-0">
+      <div class="p-4 border-b dark:border-slate-700">
+        <h2 class="font-bold">Algorithms</h2>
+        <p class="text-xs text-slate-500">Select an algorithm to experiment</p>
+      </div>
+
+      <ul id="tabList" class="p-3 space-y-2">
+        <!-- Buttons include numbers for keyboard shortcuts -->
+        <li><button class="tab-btn w-full text-left px-3 py-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700" data-algo="FCFS">1 — FCFS</button></li>
+        <li><button class="tab-btn w-full text-left px-3 py-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700" data-algo="SJF">2 — SJF (Non-preemptive)</button></li>
+        <li><button class="tab-btn w-full text-left px-3 py-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700" data-algo="SRTF">3 — SJF (Preemptive / SRTF)</button></li>
+        <li><button class="tab-btn w-full text-left px-3 py-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700" data-algo="RR">4 — Round Robin (Q=2)</button></li>
+        <li><button class="tab-btn w-full text-left px-3 py-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700" data-algo="PRIORITY">5 — Priority (Non-preemptive)</button></li>
+        <li><button class="tab-btn w-full text-left px-3 py-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700" data-algo="PRIORITY_PRE">6 — Priority (Preemptive)</button></li>
+      </ul>
+
+      <div class="p-4 border-t text-xs text-slate-500 dark:border-slate-700">
+        <p><strong>Tips:</strong></p>
+        <ul class="list-disc pl-5">
+          <li>Add processes: <kbd class="px-1 rounded bg-slate-100">A</kbd> — Remove: <kbd class="px-1 rounded bg-slate-100">R</kbd></li>
+          <li>Calculate: <kbd class="px-1 rounded bg-slate-100">C</kbd></li>
+          <li>Export Gantt PNG: <kbd class="px-1 rounded bg-slate-100">X</kbd></li>
+          <li>Download Minified HTML: <kbd class="px-1 rounded bg-slate-100">M</kbd></li>
+        </ul>
+      </div>
+    </nav>
+
+    <!-- Mobile backdrop -->
+    <div id="backdrop" class="backdrop hidden md:hidden"></div>
+
+    <!-- ================ Main content ================ -->
+    <main class="flex-1 p-6">
+      <!-- Algorithm Title + RR quantum control -->
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 id="algoTitle" class="text-2xl font-semibold">FCFS</h2>
+          <p id="algoDesc" class="text-sm text-slate-500">First Come First Serve — non-preemptive order by arrival time</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-sm">Time Quantum (RR):</label>
+          <input id="timeQuantum" type="number" min="1" value="2" class="w-20 p-1 border rounded text-sm dark:bg-slate-800 dark:border-slate-700"/>
+        </div>
+      </div>
+
+      <!-- Process Table Card -->
+      <section class="bg-white dark:bg-slate-800 p-4 rounded shadow-sm mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-medium">Process Table</h3>
+          <div class="flex gap-2">
+            <button id="addRowBtn" class="px-3 py-1 bg-green-600 text-white rounded text-sm">Add Row (A)</button>
+            <button id="removeRowBtn" class="px-3 py-1 bg-red-600 text-white rounded text-sm">Remove Row (R)</button>
+            <button id="calcBtn" class="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Calculate (C)</button>
+            <button id="resetBtn" class="px-3 py-1 bg-slate-400 text-white rounded text-sm">Reset</button>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table id="procTable" class="min-w-full text-sm">
+            <thead class="bg-slate-100 dark:bg-slate-700">
+              <tr>
+                <th class="p-2 text-left">PID</th>
+                <th class="p-2 text-left">Arrival</th>
+                <th class="p-2 text-left">Burst</th>
+                <th class="p-2 text-left priority-col hidden">Priority</th>
+              </tr>
+            </thead>
+            <tbody id="procTbody">
+              <!-- Rows inserted dynamically by JS -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Results Card -->
+      <section class="bg-white dark:bg-slate-800 p-4 rounded shadow-sm mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-medium">Results</h3>
+          <div class="text-sm text-slate-500" id="averages">Avg WT: - | Avg TAT: -</div>
+        </div>
+
+        <div class="overflow-x-auto mb-4">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-100 dark:bg-slate-700">
+              <tr>
+                <th class="p-2 text-left">PID</th>
+                <th class="p-2 text-left">Arrival</th>
+                <th class="p-2 text-left">Burst</th>
+                <th class="p-2 text-left">Priority</th>
+                <th class="p-2 text-left">Completion</th>
+                <th class="p-2 text-left">Turnaround</th>
+                <th class="p-2 text-left">Waiting</th>
+              </tr>
+            </thead>
+            <tbody id="resultTbody"></tbody>
+          </table>
+        </div>
+
+        <div>
+          <h4 class="mb-2 font-medium">Gantt Chart</h4>
+          <div id="ganttWrap" class="overflow-x-auto p-2 border rounded bg-slate-50 dark:bg-slate-900">
+            <div id="gantt" class="flex items-end gap-2"></div>
+            <div id="timeMarks" class="flex items-center gap-2 mt-2"></div>
+          </div>
+        </div>
+      </section>
+
+      <footer class="text-xs text-slate-500">
+        <p>© 2025 CPU Scheduling Simulator — Tailwind + Vanilla JS. Algorithms implemented for teaching/demo purposes.</p>
+      </footer>
+    </main>
+  </div>
+
+  <!-- ================= Part 2: Algorithms & main wiring ================= -->
+  <script>
+  /**************************************************************************
+   * Part 2: Scheduling algorithm implementations and main event wiring
+   *
+   * This section:
+   * - wires UI controls (tabs, buttons)
+   * - implements algorithms: FCFS, SJF (NP), SRTF, RR, Priority (NP & P)
+   * - exposes runCalculation() that reads the process table and computes results
+   *
+   * Each scheduling algorithm returns:
+   *   { results: [ {pid, arrival, burst, priority, completion, turnaround, waiting} ],
+   *     timeline: [pid per time unit] }
+   *
+   **************************************************************************/
+
+  // DOM references (some repeated for safety)
+  const tabs = document.querySelectorAll('.tab-btn');
+  const algoTitle = document.getElementById('algoTitle');
+  const algoDesc = document.getElementById('algoDesc');
+  const sidebar = document.getElementById('sidebar');
+  const mobileToggle = document.getElementById('mobileToggle');
+  const backdrop = document.getElementById('backdrop');
+  const darkModeToggle = document.getElementById('darkModeToggle');
+  const timeQuantumInput = document.getElementById('timeQuantum');
+  const addRowBtn = document.getElementById('addRowBtn');
+  const removeRowBtn = document.getElementById('removeRowBtn');
+  const calcBtn = document.getElementById('calcBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const exportPngBtn = document.getElementById('exportPngBtn');
+  const minifyBtn = document.getElementById('minifyBtn');
+  const procTbody = document.getElementById('procTbody');
+
+  // Application state
+  let currentAlgo = 'FCFS';
+  let pidCounter = 0;
+
+  /**
+   * setActiveTab(algo)
+   * - highlights active tab
+   * - updates title and description
+   * - toggles priority column visibility
+   */
+  function setActiveTab(algo) {
+    currentAlgo = algo;
+    tabs.forEach(t => {
+      if (t.dataset.algo === algo) {
+        t.classList.add('bg-indigo-50', 'dark:bg-slate-700', 'font-semibold');
+      } else {
+        t.classList.remove('bg-indigo-50', 'dark:bg-slate-700', 'font-semibold');
+      }
+    });
+
+    const descMap = {
+      FCFS: 'First Come First Serve — non-preemptive order by arrival time',
+      SJF: 'Shortest Job First (Non-preemptive) — choose shortest burst among ready',
+      SRTF: 'Shortest Remaining Time First (Preemptive SJF) — always run the process with least remaining time',
+      RR: 'Round Robin — time-sliced with quantum (default 2)',
+      PRIORITY: 'Priority Scheduling (Non-preemptive) — lower priority value = higher priority',
+      PRIORITY_PRE: 'Priority Scheduling (Preemptive) — can preempt when higher priority arrives'
+    };
+    algoTitle.innerText = algo + (algo === 'RR' ? ' (Round Robin)' : '');
+    algoDesc.innerText = descMap[algo] || '';
+
+    // Show/hide priority column in header; actual priority inputs handled later
+    const showPriority = algo.includes('PRIORITY');
+    document.querySelectorAll('.priority-col').forEach(el => {
+      if (showPriority) el.classList.remove('hidden'); else el.classList.add('hidden');
+    });
+  }
+
+  /**
+   * pushNewRow(pid, arrival, burst, priority)
+   * - Adds a new editable row to the process table.
+   * - If pid is null, uses an incremental P#.
+   * - priority column is shown/hidden based on currentAlgo.
+   */
+  function pushNewRow(pid = null, arrival = 0, burst = 1, priority = 1) {
+    pidCounter++;
+    const p = pid || 'P' + pidCounter;
+    const tr = document.createElement('tr');
+    tr.className = 'align-top';
+    tr.innerHTML = `
+      <td class="p-2"><span class="pid font-medium">${p}</span></td>
+      <td class="p-2"><input class="arrival w-20 p-1 border rounded text-sm dark:bg-slate-800 dark:border-slate-700" type="number" min="0" value="${arrival}"></td>
+      <td class="p-2"><input class="burst w-20 p-1 border rounded text-sm dark:bg-slate-800 dark:border-slate-700" type="number" min="1" value="${burst}"></td>
+      <td class="p-2 priority-col ${currentAlgo.includes('PRIORITY') ? '' : 'hidden'}"><input class="priority w-20 p-1 border rounded text-sm dark:bg-slate-800 dark:border-slate-700" type="number" min="0" value="${priority}"></td>
+    `;
+    procTbody.appendChild(tr);
+  }
+
+  /**
+   * readProcessesFromTable()
+   * - Reads DOM rows and returns process objects
+   * - Each object includes: pid, arrival, burst, priority, remaining, done
+   */
+  function readProcessesFromTable() {
+    const rows = Array.from(procTbody.querySelectorAll('tr'));
+    return rows.map(row => {
+      const pid = row.querySelector('.pid').innerText.trim();
+      const arrival = parseInt(row.querySelector('.arrival').value || '0', 10);
+      const burst = parseInt(row.querySelector('.burst').value || '0', 10);
+      const priorityInput = row.querySelector('.priority');
+      const priority = priorityInput ? parseInt(priorityInput.value || '0', 10) : 0;
+      return { pid, arrival, burst, priority, remaining: burst, done: false };
+    });
+  }
+
+  /************************************************************************
+   * Scheduling algorithm implementations
+   *
+   * Each function returns:
+   *   { results: [...], timeline: [...] }
+   *
+   * timeline is an array where each index represents one time unit, and the
+   * value is the PID running during that unit (used to build Gantt chart).
+   ************************************************************************/
+
+  // FCFS (First Come First Serve) - non-preemptive
+  function runFCFS(processes) {
+    // sort by arrival (stable), then run each to completion
+    const procs = processes.slice().sort((a,b) => a.arrival - b.arrival);
+    let time = 0;
+    const results = [];
+    const timeline = [];
+
+    for (const p of procs) {
+      if (time < p.arrival) time = p.arrival; // CPU idle until process arrives
+      // run p for 'burst' time units
+      for (let i = 0; i < p.burst; i++) timeline.push(p.pid);
+      time += p.burst;
+      const completion = time;
+      const turnaround = completion - p.arrival;
+      const waiting = turnaround - p.burst;
+      results.push({ pid: p.pid, arrival: p.arrival, burst: p.burst, priority: p.priority, completion, turnaround, waiting });
+    }
+    return { results, timeline };
+  }
+
+  // SJF Non-preemptive
+  function runSJF(processes) {
+    const procs = processes.map(p => ({ ...p })); // clone to avoid mutating original
+    let time = 0, completed = 0;
+    const n = procs.length;
+    const results = [];
+    const timeline = [];
+
+    while (completed < n) {
+      // ready list: arrived and not done
+      const ready = procs.filter(p => !p.done && p.arrival <= time);
+      if (ready.length === 0) { time++; continue; }
+      // choose smallest burst (tie with arrival)
+      ready.sort((a,b)=> a.burst - b.burst || a.arrival - b.arrival);
+      const cur = ready[0];
+      cur.done = true;
+      for (let i=0; i<cur.burst; i++) timeline.push(cur.pid);
+      time += cur.burst;
+      const completion = time;
+      const turnaround = completion - cur.arrival;
+      const waiting = turnaround - cur.burst;
+      results.push({ pid: cur.pid, arrival: cur.arrival, burst: cur.burst, priority: cur.priority, completion, turnaround, waiting });
+      completed++;
+    }
+    return { results, timeline };
+  }
+
+  // SRTF (Shortest Remaining Time First) - preemptive SJF
+  function runSRTF(processes) {
+    const procs = processes.map(p => ({ ...p }));
+    let time = 0, completed = 0;
+    const n = procs.length;
+    const results = [];
+    const timeline = [];
+
+    while (completed < n) {
+      const ready = procs.filter(p => !p.done && p.arrival <= time);
+      if (ready.length === 0) { time++; continue; }
+      // choose process with smallest remaining
+      ready.sort((a,b)=> a.remaining - b.remaining || a.arrival - b.arrival);
+      const cur = ready[0];
+      // execute 1 time unit (preemptive)
+      cur.remaining -= 1;
+      timeline.push(cur.pid);
+      time++;
+      if (cur.remaining === 0) {
+        cur.done = true;
+        const completion = time;
+        const turnaround = completion - cur.arrival;
+        const waiting = turnaround - cur.burst;
+        results.push({ pid: cur.pid, arrival: cur.arrival, burst: cur.burst, priority: cur.priority, completion, turnaround, waiting });
+        completed++;
+      }
+    }
+    return { results, timeline };
+  }
+
+  // Round Robin
+  function runRR(processes, quantum = 2) {
+    const procs = processes.map(p => ({ ...p }));
+    let time = 0, completed = 0;
+    const n = procs.length;
+    const results = [];
+    const timeline = [];
+    const queue = [];
+
+    // helper: enqueue arrivals up to current time
+    function enqueueArrivals() {
+      procs.forEach(pr => {
+        if (!pr.done && !queue.includes(pr) && pr.arrival <= time && pr.remaining > 0) {
+          queue.push(pr);
+        }
+      });
+    }
+
+    enqueueArrivals();
+
+    while (completed < n) {
+      if (queue.length === 0) {
+        // jump forward to next arrival to avoid busy waiting
+        const future = procs.filter(p => !p.done && p.arrival > time).map(p => p.arrival);
+        if (future.length === 0) break;
+        time = Math.min(...future);
+        enqueueArrivals();
+        continue;
+      }
+
+      const cur = queue.shift();
+      const exec = Math.min(quantum, cur.remaining);
+      // execute for 'exec' units, push pid each unit
+      for (let i=0; i<exec; i++) timeline.push(cur.pid);
+      cur.remaining -= exec;
+      time += exec;
+
+      // enqueue new arrivals that came during this exec
+      enqueueArrivals();
+
+      if (cur.remaining === 0) {
+        cur.done = true;
+        const completion = time;
+        const turnaround = completion - cur.arrival;
+        const waiting = turnaround - cur.burst;
+        results.push({ pid: cur.pid, arrival: cur.arrival, burst: cur.burst, priority: cur.priority, completion, turnaround, waiting });
+        completed++;
+      } else {
+        // requeue
+        queue.push(cur);
+      }
+    }
+    return { results, timeline };
+  }
+
+  // Priority Scheduling (non-preemptive or preemptive)
+  // Lower numeric value => higher priority
+  function runPriority(processes, preemptive = false) {
+    const procs = processes.map(p => ({ ...p }));
+    let time = 0, completed = 0;
+    const n = procs.length;
+    const results = [];
+    const timeline = [];
+
+    if (!preemptive) {
+      while (completed < n) {
+        const ready = procs.filter(p => !p.done && p.arrival <= time);
+        if (ready.length === 0) { time++; continue; }
+        ready.sort((a,b)=> a.priority - b.priority || a.arrival - b.arrival);
+        const cur = ready[0];
+        cur.done = true;
+        for (let i=0; i<cur.burst; i++) timeline.push(cur.pid);
+        time += cur.burst;
+        const completion = time;
+        const turnaround = completion - cur.arrival;
+        const waiting = turnaround - cur.burst;
+        results.push({ pid: cur.pid, arrival: cur.arrival, burst: cur.burst, priority: cur.priority, completion, turnaround, waiting });
+        completed++;
+      }
+    } else {
+      while (completed < n) {
+        const ready = procs.filter(p => !p.done && p.arrival <= time);
+        if (ready.length === 0) { time++; continue; }
+        ready.sort((a,b)=> a.priority - b.priority || a.remaining - b.remaining);
+        const cur = ready[0];
+        cur.remaining -= 1;
+        timeline.push(cur.pid);
+        time++;
+        if (cur.remaining === 0) {
+          cur.done = true;
+          const completion = time;
+          const turnaround = completion - cur.arrival;
+          const waiting = turnaround - cur.burst;
+          results.push({ pid: cur.pid, arrival: cur.arrival, burst: cur.burst, priority: cur.priority, completion, turnaround, waiting });
+          completed++;
+        }
+      }
+    }
+    return { results, timeline };
+  }
+
+  /************************************************************************
+   * runCalculation()
+   * - Reads processes from the table
+   * - Validates inputs
+   * - Calls the selected scheduling function
+   * - Passes results to displayResults (defined in Part 3)
+   ************************************************************************/
+  function runCalculation() {
+    // clear any previous results (displayResults will call clearResults)
+    if (typeof clearResults === 'function') clearResults();
+
+    const processes = readProcessesFromTable();
+    if (!processes || processes.length === 0) {
+      return alert('Please add at least one process (click Add Row).');
+    }
+
+    // validation: arrival >=0, burst > 0
+    for (const p of processes) {
+      if (isNaN(p.arrival) || p.arrival < 0) return alert('Arrival times must be >= 0');
+      if (isNaN(p.burst) || p.burst <= 0) return alert('Burst times must be > 0');
+    }
+
+    let output = { results: [], timeline: [] };
+    if (currentAlgo === 'FCFS') output = runFCFS(processes);
+    else if (currentAlgo === 'SJF') output = runSJF(processes);
+    else if (currentAlgo === 'SRTF') output = runSRTF(processes);
+    else if (currentAlgo === 'RR') output = runRR(processes, parseInt(timeQuantumInput.value, 10) || 2);
+    else if (currentAlgo === 'PRIORITY') output = runPriority(processes, false);
+    else if (currentAlgo === 'PRIORITY_PRE') output = runPriority(processes, true);
+    else output = runFCFS(processes);
+
+    // displayResults defined in Part 3
+    if (typeof displayResults === 'function') {
+      displayResults(output.results, output.timeline);
+    } else {
+      console.log('Calculation done. Results:', output.results);
+      console.log('Timeline:', output.timeline);
+      alert('Paste Part 3 to render results in UI.');
+    }
+  }
+
+  /******************************
+   * UI event wiring
+   ******************************/
+  // Tab buttons
+  tabs.forEach(t => {
+    t.addEventListener('click', () => {
+      setActiveTab(t.dataset.algo);
+      if (typeof updatePriorityColumnVisibility === 'function') updatePriorityColumnVisibility();
+      if (typeof clearResults === 'function') clearResults();
+    });
+  });
+
+  // Mobile sidebar open/close
+  mobileToggle && mobileToggle.addEventListener('click', () => {
+    sidebar.classList.toggle('open');
+    backdrop.classList.toggle('hidden');
+  });
+  backdrop && backdrop.addEventListener('click', () => {
+    sidebar.classList.remove('open');
+    backdrop.classList.add('hidden');
+  });
+
+  // Dark mode checkbox
+  darkModeToggle.addEventListener('change', (e) => {
+    if (e.target.checked) {
+      document.documentElement.classList.add('dark');
+      document.body.classList.add('dark');
+      document.body.style.backgroundColor = '#0f172a';
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.body.classList.remove('dark');
+      document.body.style.backgroundColor = '';
+    }
+  });
+
+  // Add/Remove/Calculate/Reset buttons
+  addRowBtn.addEventListener('click', () => pushNewRow());
+  removeRowBtn.addEventListener('click', () => {
+    const rows = procTbody.querySelectorAll('tr');
+    if (rows.length > 0) procTbody.removeChild(rows[rows.length-1]);
+  });
+  calcBtn.addEventListener('click', runCalculation);
+  resetBtn.addEventListener('click', () => {
+    procTbody.innerHTML = '';
+    document.getElementById('resultTbody').innerHTML = '';
+    if (typeof clearResults === 'function') clearResults();
+    pidCounter = 0;
+  });
+
+  // download / export / minify wiring (implemented in Part 3)
+  downloadBtn.addEventListener('click', () => {
+    if (typeof downloadCSV === 'function') downloadCSV();
+    else alert('CSV helper not loaded (Part 3).');
+  });
+  exportPngBtn.addEventListener('click', () => {
+    if (typeof exportGanttPNG === 'function') exportGanttPNG();
+    else alert('PNG helper not loaded (Part 3).');
+  });
+  minifyBtn.addEventListener('click', () => {
+    if (typeof downloadMinifiedHTML === 'function') downloadMinifiedHTML();
+    else alert('Minify helper not loaded (Part 3).');
+  });
+
+  // Initial sample rows for quick testing/demo
+  (function init() {
+    setActiveTab('FCFS');
+    pushNewRow('P1', 0, 5, 2);
+    pushNewRow('P2', 1, 3, 1);
+    pushNewRow('P3', 2, 1, 3);
+  })();
+
+  // Tab keyboard accessibility (arrow up/down, enter)
+  document.getElementById('tabList').addEventListener('keydown', (e) => {
+    const focusable = Array.from(document.querySelectorAll('.tab-btn'));
+    const idx = focusable.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const next = focusable[(idx + 1) % focusable.length];
+      next.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prev = focusable[(idx - 1 + focusable.length) % focusable.length];
+      prev.focus();
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (document.activeElement.classList.contains('tab-btn')) document.activeElement.click();
+    }
+  });
+
+  // Global keyboard shortcuts (not when typing in an input)
+  document.addEventListener('keydown', (e) => {
+    const activeTag = document.activeElement.tagName.toLowerCase();
+    if (['input','textarea'].includes(activeTag)) return; // avoid interfering with typing
+    const k = e.key.toLowerCase();
+    if (k === 'a') pushNewRow();
+    else if (k === 'r') {
+      const rows = procTbody.querySelectorAll('tr');
+      if (rows.length > 0) procTbody.removeChild(rows[rows.length-1]);
+    } else if (k === 'c') runCalculation();
+    else if (k >= '1' && k <= '6') {
+      const idx = parseInt(k,10)-1;
+      const tab = Array.from(tabs)[idx];
+      if (tab) tab.click();
+    }
+    // X, M are handled in Part 3
+  });
+
+  </script>
+
+  <!-- ================= Part 3: Renderers & Export Helpers (detailed comments) ================= -->
+  <script>
+  /**************************************************************************
+   * Part 3: Helpers for result rendering, Gantt chart, CSV, PNG export,
+   * and priority-column visibility / minify utilities.
+   *
+   * This section connects to functions wired in Part 2:
+   * - displayResults(results, timeline)
+   * - renderGantt(timeline)
+   * - downloadCSV / exportGanttPNG / downloadMinifiedHTML
+   *
+   * It also provides nice-to-have features:
+   * - Colored Gantt blocks (consistent color per PID)
+   * - Time markers under the chart
+   * - Sorting results for readability
+   **************************************************************************/
+
+  // DOM refs
+  const resultTbody = document.getElementById('resultTbody');
+  const averagesLabel = document.getElementById('averages');
+  const gantt = document.getElementById('gantt');
+  const timeMarks = document.getElementById('timeMarks');
+
+  // Internal PID color cache (consistent color per PID)
+  const pidColorCache = {};
+  const palette = ['#4f46e5','#22c55e','#eab308','#ef4444','#06b6d4','#f97316','#8b5cf6','#ec4899','#10b981','#3b82f6'];
+
+  /**
+   * getColorForPid(pid)
+   * - returns a consistent color for each PID using a small cache
+   */
+  function getColorForPid(pid) {
+    if (pidColorCache[pid]) return pidColorCache[pid];
+    // simple hash-based assignment
+    let h = 0;
+    for (let i = 0; i < pid.length; i++) h = (h * 31 + pid.charCodeAt(i)) >>> 0;
+    const color = palette[h % palette.length];
+    pidColorCache[pid] = color;
+    return color;
+  }
+
+  /**
+   * clearResults()
+   * - Removes all rows from results table and clears Gantt area
+   */
+  function clearResults() {
+    resultTbody.innerHTML = '';
+    gantt.innerHTML = '';
+    timeMarks.innerHTML = '';
+    averagesLabel.textContent = 'Avg WT: – | Avg TAT: –';
+  }
+
+  /**
+   * displayResults(results, timeline)
+   * - Populates results into the results table and renders the Gantt chart
+   * - results: array of {pid, arrival, burst, priority, completion, turnaround, waiting}
+   * - timeline: array of pid executed per time unit
+   */
+  function displayResults(results, timeline) {
+    clearResults();
+    if (!results || results.length === 0) return;
+
+    // sort results by PID (or you could keep completion order)
+    const sorted = results.slice().sort((a,b) => a.pid.localeCompare(b.pid));
+    let sumWT = 0, sumTAT = 0;
+
+    for (const r of sorted) {
+      sumWT += r.waiting;
+      sumTAT += r.turnaround;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="p-2">${r.pid}</td>
+        <td class="p-2">${r.arrival}</td>
+        <td class="p-2">${r.burst}</td>
+        <td class="p-2">${r.priority ?? ''}</td>
+        <td class="p-2">${r.completion}</td>
+        <td class="p-2">${r.turnaround}</td>
+        <td class="p-2">${r.waiting}</td>
+      `;
+      resultTbody.appendChild(tr);
+    }
+
+    const avgWT = (sumWT / results.length).toFixed(2);
+    const avgTAT = (sumTAT / results.length).toFixed(2);
+    averagesLabel.textContent = `Avg WT: ${avgWT} | Avg TAT: ${avgTAT}`;
+
+    // render Gantt
+    renderGantt(timeline);
+  }
+
+  /**
+   * renderGantt(timeline)
+   * - Compresses consecutive identical PIDs into blocks and renders colored blocks.
+   * - Adds time markers under each block start and final end time.
+   */
+  function renderGantt(timeline) {
+    gantt.innerHTML = '';
+    timeMarks.innerHTML = '';
+    if (!timeline || timeline.length === 0) return;
+
+    // Merge contiguous identical PIDs to blocks [{pid, len, start}]
+    const blocks = [];
+    let curPid = timeline[0], len = 1, start = 0;
+    for (let i = 1; i < timeline.length; i++) {
+      if (timeline[i] === curPid) {
+        len++;
+      } else {
+        blocks.push({ pid: curPid, len, start });
+        start += len;
+        curPid = timeline[i];
+        len = 1;
+      }
+    }
+    blocks.push({ pid: curPid, len, start });
+
+    const pxPerUnit = 40; // scale for visual width
+    let currentTime = 0;
+
+    // Render each block with color
+    blocks.forEach(block => {
+      const color = getColorForPid(block.pid);
+      const div = document.createElement('div');
+      div.className = 'gantt-block text-white text-sm font-medium';
+      div.style.backgroundColor = color;
+      div.style.width = (block.len * pxPerUnit) + 'px';
+      div.textContent = block.pid;
+      // tooltip with details (start, end)
+      div.title = `${block.pid} — start: ${block.start}, end: ${block.start + block.len}`;
+      gantt.appendChild(div);
+
+      // time mark for block start and spacer
+      const mark = document.createElement('div');
+      mark.className = 'time-mark';
+      mark.style.width = '40px';
+      mark.textContent = block.start;
+      timeMarks.appendChild(mark);
+      const spacer = document.createElement('div');
+      spacer.style.display = 'inline-block';
+      spacer.style.width = (block.len * pxPerUnit - 40) + 'px';
+      timeMarks.appendChild(spacer);
+
+      currentTime = block.start + block.len;
+    });
+
+    // final time mark
+    const finalMark = document.createElement('div');
+    finalMark.className = 'time-mark';
+    finalMark.textContent = currentTime;
+    timeMarks.appendChild(finalMark);
+  }
+
+  /**
+   * updatePriorityColumnVisibility()
+   * - Called when switching algorithms to show/hide priority inputs in the table
+   */
+  function updatePriorityColumnVisibility() {
+    const show = currentAlgo.includes('PRIORITY');
+    document.querySelectorAll('.priority-col').forEach(el => {
+      el.classList.toggle('hidden', !show);
+    });
+    // Add priority inputs to rows if needed
+    if (show) {
+      const rows = procTbody.querySelectorAll('tr');
+      rows.forEach(tr => {
+        const priorityInput = tr.querySelector('.priority');
+        if (!priorityInput) {
+          const td = tr.children[3];
+          if (td) td.innerHTML = `<input class="priority w-20 p-1 border rounded text-sm dark:bg-slate-800 dark:border-slate-700" type="number" min="0" value="1">`;
+          else {
+            const newTd = document.createElement('td');
+            newTd.className = 'p-2 priority-col';
+            newTd.innerHTML = `<input class="priority w-20 p-1 border rounded text-sm dark:bg-slate-800 dark:border-slate-700" type="number" min="0" value="1">`;
+            tr.appendChild(newTd);
+          }
+        } else {
+          tr.children[3].classList.remove('hidden');
+        }
+      });
+    } else {
+      // hide priority cells if present
+      procTbody.querySelectorAll('tr').forEach(tr => {
+        const td = tr.children[3];
+        if (td) td.classList.add('hidden');
+      });
+    }
+  }
+
+  /************************************************************************
+   * Export utilities
+   ************************************************************************/
+
+  // downloadCSV() - builds CSV from result table and triggers browser download
+  function downloadCSV() {
+    const rows = Array.from(resultTbody.querySelectorAll('tr')).map(tr =>
+      Array.from(tr.children).map(td => td.innerText.trim())
+    );
+    if (rows.length === 0) return alert('Run a calculation first to generate results.');
+    const headers = ['PID','Arrival','Burst','Priority','Completion','Turnaround','Waiting'];
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${currentAlgo}_results.csv`;
+    a.click();
+  }
+
+  // exportGanttPNG() - uses html2canvas to render ganttWrap to a PNG and download
+  async function exportGanttPNG() {
+    const ganttWrap = document.getElementById('ganttWrap');
+    if (!ganttWrap || !gantt.innerHTML.trim()) return alert('No Gantt chart to export. Run a calculation first.');
+    try {
+      const canvas = await html2canvas(ganttWrap, { backgroundColor: document.body.classList.contains('dark') ? '#0f172a' : '#f8fafc', scale: 2 });
+      canvas.toBlob(blob => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${currentAlgo}_gantt.png`;
+        a.click();
+      });
+    } catch (err) {
+      alert('Export failed: ' + err.message);
+    }
+  }
+
+  // downloadMinifiedHTML() - produces a compact single-file HTML snapshot of the current page
+  function downloadMinifiedHTML() {
+    try {
+      let html = '<!doctype html>' + document.documentElement.outerHTML;
+      // remove comments
+      html = html.replace(/<!--[\s\S]*?-->/g, '');
+      // collapse whitespace/newlines
+      html = html.replace(/\s{2,}/g, ' ').replace(/(\r\n|\n|\r)/gm, '');
+      const blob = new Blob([html], { type: 'text/html' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'cpu_scheduling_simulator_minified.html';
+      a.click();
+    } catch (e) {
+      alert('Minify failed: ' + e.message);
+    }
+  }
+
+  // wire export helpers to the global names used in Part 2
+  window.downloadCSV = downloadCSV;
+  window.exportGanttPNG = exportGanttPNG;
+  window.downloadMinifiedHTML = downloadMinifiedHTML;
+
+  // Additional keyboard shortcuts for X (PNG) and M (minify)
+  document.addEventListener('keydown', (e) => {
+    if (['input','textarea'].includes(document.activeElement.tagName.toLowerCase())) return;
+    if (e.key.toLowerCase() === 'x') exportGanttPNG();
+    if (e.key.toLowerCase() === 'm') downloadMinifiedHTML();
+  });
+
+  </script>
+
+</body>
+</html>
